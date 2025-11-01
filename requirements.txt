@@ -1,0 +1,23 @@
+# Python Dependencies for Ames Housing Price Prediction
+# ========================================================
+# Install all dependencies with: pip install -r requirements.txt
+
+# Core data science libraries
+pandas>=1.5.0          # Data manipulation and analysis
+numpy>=1.23.0          # Numerical computing
+
+# Machine learning
+scikit-learn>=1.2.0    # Machine learning algorithms and tools
+
+# Visualization
+matplotlib>=3.6.0      # Plotting and visualization
+seaborn>=0.12.0        # Statistical data visualization
+
+# Model persistence
+joblib>=1.2.0          # Saving and loading models
+
+# Optional but recommended
+jupyter>=1.0.0         # If you want to run code in notebooks
+ipython>=8.0.0         # Enhanced interactive Python shell
+
+ipykernel >=6.0.0      # IPython kernel for Jupyter
