@@ -8,7 +8,7 @@ from sklearn.preprocessing import StandardScaler, OneHotEncoder
 from sklearn.compose import ColumnTransformer
 from sklearn.pipeline import Pipeline
 from sklearn.model_selection import train_test_split
-from sklearn.linear_model import LinearRegression
+from sklearn.linear_model import LogisticRegression
 from sklearn.model_selection import GridSearchCV
 from sklearn.metrics import classification_report, confusion_matrix, accuracy_score
 
@@ -41,7 +41,6 @@ def eda(df: pd.DataFrame, target: str = TARGET) -> None:
     variables_to_display = top_corr + bottom_corr
     for var in variables_to_display:
         sns.boxplot(data=df, x=target, y=var)
-        sns.boxplot(data=df, x=target, y=var)
         plt.title(f"Box plot of {var} by {target}")
         plt.show()
 
@@ -53,18 +52,30 @@ def eda(df: pd.DataFrame, target: str = TARGET) -> None:
         plt.title(f"Histogram of {var} by {target}")
         plt.show()
         
-def remove_outliers(df: pd.DataFrame, z_thresh: float = 3.0) -> pd.DataFrame:
+def remove_outliers(df: pd.DataFrame) -> pd.DataFrame:
+    """Remove outliers using IQR method (simpler and more robust)"""
     df_clean = df.copy()
+    initial_shape = df_clean.shape
 
-    cols = df.select_dtypes(include='number').skew().sort_values(ascending=False)
-    print(f"Removing outliers for numerical columns based on Z-threshold of {z_thresh}.")
-    print(f"Columns to process: {cols.index.tolist()}")
+    # Only remove outliers from numeric columns (excluding target)
+    numeric_cols = df_clean.select_dtypes(include='number').columns.tolist()
+    if TARGET in numeric_cols:
+        numeric_cols.remove(TARGET)
 
-    for c in cols.index:
-        col_zscore = (df_clean[c] - df_clean[c].mean()) / df_clean[c].std()
-        df_clean = df_clean[col_zscore.abs() <= z_thresh]
+    print(f"Removing outliers using IQR method for {len(numeric_cols)} columns")
 
-    print(f"Data shape after outlier removal: {df_clean.shape}")
+    for col in numeric_cols:
+        Q1 = df_clean[col].quantile(0.25)
+        Q3 = df_clean[col].quantile(0.75)
+        IQR = Q3 - Q1
+
+        lower_bound = Q1 - 1.5 * IQR
+        upper_bound = Q3 + 1.5 * IQR
+
+        # Remove outliers
+        df_clean = df_clean[(df_clean[col] >= lower_bound) & (df_clean[col] <= upper_bound)]
+
+    print(f"Data shape: {initial_shape} -> {df_clean.shape} (removed {initial_shape[0] - df_clean.shape[0]} rows)")
     return df_clean
 
 def split_train_test(df: pd.DataFrame, test_size: float = 0.2):
@@ -98,7 +109,7 @@ def preprocessing(df: pd.DataFrame) -> pd.DataFrame:
     return preprocessor
 
 def train(X_train, y_train, preprocessor):
-    log = LinearRegression(random_state=RANDOM_STATE, max_iter=1000, class_weight='balanced')
+    log = LogisticRegression(random_state=RANDOM_STATE, max_iter=1000, class_weight='balanced')
     model = Pipeline([
         ('preprocessor', preprocessor),
         ('classifier', log)
@@ -130,14 +141,11 @@ def evaluate(model, X_test, y_test):
     print(f"Test Accuracy: {accuracy:.4f}")
     print("\nConfusion Matrix:")
 
-    TP, FP, FN, TN = confusion_matrix(y_test, y_pred).ravel()
+    TN, FP, FN, TP = confusion_matrix(y_test, y_pred).ravel()
     print(f"TP: {TP}, FP: {FP}, FN: {FN}, TN: {TN}")
 
     print("\nClassification Report:")
     print(classification_report(y_test, y_pred))
-
-
-
 
 def main():
     df = load_data()
