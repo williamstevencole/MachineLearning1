@@ -9,7 +9,7 @@ import argparse
 
 # scikit-learn imports
 from sklearn.model_selection import train_test_split
-from sklearn.preprocessing import StandardScaler, OneHotEncoder
+from sklearn.preprocessing import StandardScaler, OneHotEncoder, LabelEncoder
 from sklearn.impute import SimpleImputer
 from sklearn.compose import ColumnTransformer
 from sklearn.pipeline import Pipeline
@@ -29,7 +29,6 @@ pd.set_option("display.max_columns", None)
 def load_data() -> pd.DataFrame:
     data = pd.read_csv(CSV_PATH)
     df = data.copy()
-    df.columns = df.columns.str.strip().str.lower().str.replace(' ', '_')
     return df
 
 def split_train_test(df: pd.DataFrame, test_size: float = 0.2):
@@ -62,17 +61,11 @@ def eda(df: pd.DataFrame, target= TARGET):
     print("\nLowest Correlation with target variable:")
     print(bot_corr)
 
-    cols_to_plot = top_corr.index.tolist()[1:6] + bot_corr.index.tolist()
-
-    for col in cols_to_plot:
+    for col in top_corr + bot_corr:
         plt.figure()
         sns.scatterplot(data=df, x=col, y=TARGET, alpha=0.5)
-        plt.title(f"{col} vs {TARGET}")
-        plt.show()
-
-        plt.figure()
-        sns.histplot(df[col], kde=True, bins=30)
-        plt.title(f"Distribution of {col}")
+        sns.histplot(data=df, x=col, alpha=0.3, color='orange', bins=30, kde=True)
+        plt.title(f"Scatter plot of {col} vs {TARGET} and histogram of {col}")
         plt.show()
 
 def remove_outliers(df: pd.DataFrame, z_thresh: float = 3.0) -> pd.DataFrame:
@@ -81,18 +74,19 @@ def remove_outliers(df: pd.DataFrame, z_thresh: float = 3.0) -> pd.DataFrame:
     cols = df.select_dtypes(include=np.number).skew().sort_values(ascending=False)
     print(f"Columns to process: {cols.index.tolist()}")
 
-    mask = np.ones(len(df), dtype=bool)
     for c in cols.index:
-        if np.issubdtype(df[c].dtype, np.number):
-            mean, std = df[c].mean(), df[c].std()
-            mask &= np.abs((df[c] - mean) / std) <= z_thresh
-    df_clean = df[mask]
+        if c not in df.columns or not np.issubdtype(df[c].dtype, np.number):
+            continue
+        mean, std = df[c].mean(), df[c].std()
+        z_scores = (df[c] - mean) / std
+        df_clean = df_clean[np.abs(z_scores) <= z_thresh]
+        print(f"Column '{c}': Removed {len(df) - len(df_clean)} outliers.")
 
     return df_clean
 
-def preprocessing(X_train: pd.DataFrame) -> pd.DataFrame:
-    numeric_cols = X_train.select_dtypes(include=np.number).columns.tolist()
-    categoric_cols = X_train.select_dtypes(exclude=np.number).columns.tolist()
+def preprocessing(df: pd.DataFrame) -> pd.DataFrame:
+    numeric_cols = df.select_dtypes(include=np.number).columns.tolist()
+    categoric_cols = df.select_dtypes(exclude=np.number).columns.tolist()
 
     numeric_transformer = Pipeline([
         ('imputer', SimpleImputer(strategy='median')),
@@ -157,18 +151,18 @@ def main():
     parser.add_argument("--model-path", type=str, default="gold_price_model.pkl", help="Path to save/load the model")
     args = parser.parse_args()
 
-    model = None
-
     if args.action == "predict":
         model = joblib.load(args.model_path)
+        print("Model loaded for prediction.")
+        return
     elif args.action == "train":
         df = load_data()
-        df = remove_outliers(df)
         X_train, X_test, y_train, y_test = split_train_test(df)
         eda(df)
-        preprocessor = preprocessing(X_train)
+        df = remove_outliers(df)
+        preprocessor = preprocessing(df)
         model = train(X_train, y_train, preprocessor)
-    evaluate(model, X_test, y_test)
+        evaluate(model, X_test, y_test)
 
 
 if __name__ == "__main__":

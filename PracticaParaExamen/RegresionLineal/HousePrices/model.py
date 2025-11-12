@@ -7,7 +7,7 @@ from pathlib import Path
 import joblib
 
 from sklearn.model_selection import train_test_split, GridSearchCV
-from sklearn.preprocessing import StandardScaler, OneHotEncoder, OrdinalEncoder
+from sklearn.preprocessing import StandardScaler, OneHotEncoder
 from sklearn.impute import SimpleImputer
 from sklearn.compose import ColumnTransformer
 from sklearn.pipeline import Pipeline
@@ -25,7 +25,36 @@ def load_data() -> pd.DataFrame:
     ds = pd.read_csv(CSV_PATH)
     return ds.copy()
 
-def eda(df: pd.DataFrame) -> pd.DataFrame:
+def remove_outliers_IQR(df: pd.DataFrame, cols: list, k: float = 1.5) -> pd.DataFrame:
+    """Remove outliers from specified columns using the IQR method with safety check"""
+    mask = pd.Series(True, index=df.index)
+
+    for col in cols:
+        if col not in df.columns or not np.issubdtype(df[col].dropna().dtype, np.number):
+            continue
+
+        Q1 = df[col].quantile(0.25)
+        Q3 = df[col].quantile(0.75)
+        IQR = Q3 - Q1
+        lower_bound = Q1 - k * IQR
+        upper_bound = Q3 + k * IQR
+
+        mask &= df[col].between(lower_bound, upper_bound) | df[col].isna()
+
+    before = len(df)
+    after = mask.sum()
+    removed = before - after
+    ratio = removed / before if before > 0 else 0
+
+    if ratio > 0.12:
+        print(f"WARNING: More than 12% of data would be removed. Skipping outlier removal.")
+        return df
+    else:
+        print(f"Applied outlier removal. Dataset size: {after} rows")
+        return df[mask]
+    
+
+def eda(df: pd.DataFrame) -> tuple[pd.DataFrame, list]:
     df = df.drop(columns=['Id'])
     #display(df.info())
     #display(df.describe(include="all").T)  # Transpose for better readability
@@ -56,7 +85,13 @@ def eda(df: pd.DataFrame) -> pd.DataFrame:
     top_corr = corr_target.head(5)
     bot_corr = corr_target.tail(5)
 
-    for col in top_corr.index.tolist() + bot_corr.index.tolist():
+    # Store top correlated features for outlier removal
+    top_corr_features = top_corr.index.tolist()
+    print(f"\nTop 5 features most correlated with {TARGET}:")
+    for feat, corr_val in top_corr.items():
+        print(f"  {feat}: {corr_val:.3f}")
+
+    for col in top_corr_features + bot_corr.index.tolist():
         plt.figure()
         sns.scatterplot(data=df, x=col, y=TARGET, alpha=0.5)
         plt.title(f"Scatter plot of {col} vs {TARGET}")
@@ -67,13 +102,13 @@ def eda(df: pd.DataFrame) -> pd.DataFrame:
         plt.title(f"Distribution of {col}")
         plt.show()
 
-    return df
+    return df, top_corr_features
 
 def split_train_test(df: pd.DataFrame, test_size: float = 0.2):
     X = df.drop(columns=[TARGET])
     y = df[TARGET]
 
-    return train_test_split(X, y, test_size=test_size, random_state=RANDOM_STATE, shuffle=True)
+    return train_test_split(X, y, test_size=test_size, random_state=RANDOM_STATE, shuffle=True, stratify=y)
 
 def preprocessor(df: pd.DataFrame) -> ColumnTransformer:
     numeric_features = df.select_dtypes(include=np.number).columns.tolist()
@@ -99,19 +134,19 @@ def preprocessor(df: pd.DataFrame) -> ColumnTransformer:
 def train_model(X_train: pd.DataFrame, y_train: pd.Series, preproc: ColumnTransformer) -> Pipeline:
     model = Pipeline(steps=[
         ('preprocessor', preproc),
-        ('regressor', ElasticNet(random_state=RANDOM_STATE, max_iter=10000, n_jobs=-1))
+        ('regressor', ElasticNet(random_state=RANDOM_STATE, max_iter=10000))
     ])
 
     param_grid = {
-        'regressor__alpha': [0.1, 1.0, 10.0],
-        'regressor__l1_ratio': [0.1, 0.5, 0.9]
+        'regressor__alpha': [0.1, 1.0, 5.0, 10.0, 50.0, 100.0],
+        'regressor__l1_ratio': [0.1, 0.5, 0.7, 0.9, 0.95, 0.99, 1.0]
     }
 
-    grid_search = GridSearchCV(model, param_grid, cv=5, scoring='neg_mean_squared_error', n_jobs=-1)
+    grid_search = GridSearchCV(model, param_grid, cv=5, scoring='neg_mean_absolute_error', n_jobs=-1)
     grid_search.fit(X_train, y_train)
 
     print(f"Best parameters: {grid_search.best_params_}")
-    print(f"Best CV RMSE: {np.sqrt(-grid_search.best_score_)}")
+    print(f"Best CV MAE: {-grid_search.best_score_:.2f}")
 
     return grid_search.best_estimator_
 
@@ -120,24 +155,46 @@ def evaluate_model(model: Pipeline, X_test: pd.DataFrame, y_test: pd.Series):
 
     mae = mean_absolute_error(y_test, y_pred)
     mse = mean_squared_error(y_test, y_pred)
-    rmse = np.sqrt(mse)
+    rmse = root_mean_squared_error(y_test, y_pred)
 
-    print(f"Test MAE: {mae}")
-    print(f"Test MSE: {mse}")
-    print(f"Test RMSE: {rmse}")
+    print(f"\n=== Model Evaluation ===")
+    print(f"Test MAE: ${mae:,.2f}")
+    print(f"Test MSE: ${mse:,.2f}")
+    print(f"Test RMSE: ${rmse:,.2f}")
+
+    # Visualization: Actual vs Predicted
+    plt.figure(figsize=(10, 6))
+    plt.scatter(y_test, y_pred, alpha=0.6, edgecolors='k', linewidths=0.5)
+    plt.xlabel("Actual SalePrice")
+    plt.ylabel("Predicted SalePrice")
+    plt.title("Actual vs Predicted SalePrice")
+
+    # Perfect prediction line
+    lims = [min(y_test.min(), y_pred.min()), max(y_test.max(), y_pred.max())]
+    plt.plot(lims, lims, 'r--', linewidth=2, label='Perfect Prediction')
+    plt.legend()
+    plt.grid(True, alpha=0.3)
+    plt.tight_layout()
+    plt.show()
+
 
 def main():
+    # Load data
     df = load_data()
-    display(df.head())
-    df = eda(df)
+    print(f"Dataset loaded: {df.shape[0]} rows, {df.shape[1]} columns")
+
+    df, top_corr_features = eda(df)
+
+    df = remove_outliers_IQR(df, top_corr_features)
+
     X_train, X_test, y_train, y_test = split_train_test(df)
     preproc = preprocessor(X_train)
     model = train_model(X_train, y_train, preproc)
+
     evaluate_model(model, X_test, y_test)
 
-    
+
     joblib.dump(model, "house_price_model.pkl")
-    print("Model saved as house_price_model.pkl")
 
 
 
