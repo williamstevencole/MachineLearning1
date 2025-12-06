@@ -10,24 +10,41 @@ DATA_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), "files", "w
 TARGET = "quality"
 
 def pca(df: pd.DataFrame, target_col: str):
-    X_vis = df.drop(target_col, axis=1)
-    X_vis = pd.get_dummies(X_vis, columns=['type'], drop_first=True)
-    y_vis = df[target_col]
+
+    # Solo variables numéricas para PCA
+    X = df.drop(columns=[target_col, "type"])
+    y = df[target_col]
 
     scaler = StandardScaler()
-    X_scaled = scaler.fit_transform(X_vis)
+    X_scaled = scaler.fit_transform(X)
 
+    
+    pca_full = PCA()
+    pca_full.fit(X_scaled)
+
+    # Scree plot
+    plt.figure(figsize=(8,5))
+    plt.plot(range(1, len(pca_full.explained_variance_ratio_)+1),
+             pca_full.explained_variance_ratio_, marker='o')
+    plt.title("Scree Plot")
+    plt.xlabel("Component")
+    plt.ylabel("Explained Variance Ratio")
+    plt.grid()
+    plt.show()
+
+    # PCA 2 components
     pca_2 = PCA(n_components=2, random_state=RANDOM_STATE)
     components_2 = pca_2.fit_transform(X_scaled)
 
     plt.figure(figsize=(8,6))
-    sns.scatterplot(x=components_2[:,0], y=components_2[:,1], hue=y_vis, alpha=0.6)
+    sns.scatterplot(x=components_2[:,0], y=components_2[:,1], hue=y, alpha=0.6)
     plt.title("PCA - 2 Components")
     plt.xlabel(f"PC1 ({pca_2.explained_variance_ratio_[0]:.2%})")
     plt.ylabel(f"PC2 ({pca_2.explained_variance_ratio_[1]:.2%})")
     plt.legend(title=target_col)
     plt.show()
 
+    # PCA 3 components
     pca_3 = PCA(n_components=3, random_state=RANDOM_STATE)
     components_3 = pca_3.fit_transform(X_scaled)
 
@@ -35,14 +52,16 @@ def pca(df: pd.DataFrame, target_col: str):
     ax = fig.add_subplot(111, projection='3d')
 
     colors = {'Fraud': 'red', 'Legit': 'blue'}
-    for label in y_vis.unique():
-        mask = y_vis == label
-        ax.scatter(components_3[mask, 0],
-                  components_3[mask, 1],
-                  components_3[mask, 2],
-                  c=colors[label],
-                  label=label,
-                  alpha=0.6)
+    for label in y.unique():
+        mask = y == label
+        ax.scatter(
+            components_3[mask, 0],
+            components_3[mask, 1],
+            components_3[mask, 2],
+            c=colors[label],
+            label=label,
+            alpha=0.6
+        )
 
     ax.set_xlabel(f"PC1 ({pca_3.explained_variance_ratio_[0]:.2%})")
     ax.set_ylabel(f"PC2 ({pca_3.explained_variance_ratio_[1]:.2%})")
